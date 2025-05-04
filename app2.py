@@ -442,8 +442,8 @@ if chess_data is not None:
                 
         # Display hybrid recommendations
         with tab3:
-        st.header("Hybrid Recommendations")
-        st.write("Combined recommendations from both content-based and collaborative filtering")
+            st.header("Hybrid Recommendations")
+            st.write("Combined recommendations from both content-based and collaborative filtering")
         
         if len(hybrid_recs) > 0:
             # First, display a summary table of all recommendations
