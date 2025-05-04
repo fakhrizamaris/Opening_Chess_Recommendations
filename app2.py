@@ -18,7 +18,7 @@ st.write("Get personalized chess opening recommendations based on your preferenc
 @st.cache_data
 def load_data():
     try:
-        chess = pd.read_csv("Dataset\games.csv")
+        chess = pd.read_csv("games.csv")
         # Remove duplicates based on id
         chess = chess.drop_duplicates(subset=['id'])
         
