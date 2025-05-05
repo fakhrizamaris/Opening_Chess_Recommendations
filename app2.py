@@ -10,6 +10,22 @@ import os
 # Set page config
 st.set_page_config(page_title="Chess Opening Recommendation System", layout="wide")
 
+st.markdown(
+    """
+    <style>
+    [data-testid="stSidebar"] {
+        background-image: url("https://upload.wikimedia.org/wikipedia/commons/thumb/4/4e/Chess_pieces_close_up.jpg/1200px-Chess_pieces_close_up.jpg");
+        background-size: cover;
+        background-repeat: no-repeat;
+        background-attachment: scroll;
+        text-color: white;
+        font-weight: 600;
+    }
+    
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 # Title and description
 st.title("Chess Opening Recommendation System")
 st.write("Get personalized chess opening recommendations based on your preferences")
@@ -384,7 +400,7 @@ def get_collaborative_recommendations(user_rating, collaborative_data, collabora
 # Function to get hybrid recommendations
 def get_hybrid_recommendations(favorite_openings, user_rating, 
                               content_based_model, collaborative_data, collaborative_model,
-                              alpha=0.7, top_n=5):
+                              alpha=0.75, top_n=5):
     """
     Mendapatkan rekomendasi hybrid filtering dengan menggabungkan content-based dan collaborative filtering
     dengan normalisasi skor yang tepat dan debugging
