@@ -40,25 +40,25 @@ def load_data():
 def load_models():
     try:
         # Load content-based model
-        with open(r'models\content_based_model.pkl', 'rb') as f:
+        with open(r'models/content_based_model.pkl', 'rb') as f:
             content_based_model = pickle.load(f)
         
         # Load collaborative data
-        with open(r'models\collaborative_data.pkl', 'rb') as f:
+        with open(r'models/collaborative_data.pkl', 'rb') as f:
             collaborative_data = pickle.load(f)
         
         # Load collaborative model
         collaborative_model = {
-            'model': tf.keras.models.load_model(r'models\collaborative_model.keras')
+            'model': tf.keras.models.load_model(r'models/collaborative_model.keras')
         }
         
         # Load additional collaborative model data
-        with open(r'models\collaborative_model_data.pkl', 'rb') as f:
+        with open(r'models/collaborative_model_data.pkl', 'rb') as f:
             collab_data = pickle.load(f)
             collaborative_model.update(collab_data)
         
         # Load hybrid model
-        with open(r'models\hybrid_model.pkl', 'rb') as f:
+        with open(r'models/hybrid_model.pkl', 'rb') as f:
             hybrid_model = pickle.load(f)
         
         return content_based_model, collaborative_data, collaborative_model, hybrid_model
