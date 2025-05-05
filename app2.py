@@ -40,25 +40,25 @@ def load_data():
 def load_models():
     try:
         # Load content-based model
-        with open('models\content\models\content_based_model.pkl', 'rb') as f:
+        with open(r'models\content_based_model.pkl', 'rb') as f:
             content_based_model = pickle.load(f)
         
         # Load collaborative data
-        with open('models\content\models\collaborative_data.pkl', 'rb') as f:
+        with open(r'models\collaborative_data.pkl', 'rb') as f:
             collaborative_data = pickle.load(f)
         
         # Load collaborative model
         collaborative_model = {
-            'model': tf.keras.models.load_model('models\content\models\collaborative_model.keras')
+            'model': tf.keras.models.load_model(r'models\collaborative_model.keras')
         }
         
         # Load additional collaborative model data
-        with open('models\content\models\collaborative_model_data.pkl', 'rb') as f:
+        with open(r'models\collaborative_model_data.pkl', 'rb') as f:
             collab_data = pickle.load(f)
             collaborative_model.update(collab_data)
         
         # Load hybrid model
-        with open('models\content\models\hybrid_model.pkl', 'rb') as f:
+        with open(r'models\hybrid_model.pkl', 'rb') as f:
             hybrid_model = pickle.load(f)
         
         return content_based_model, collaborative_data, collaborative_model, hybrid_model
@@ -90,6 +90,21 @@ def get_content_based_recommendations(favorite_openings, content_based_model, to
         'similarity_score': similarity_scores.values
     })
     
+    def calibrate_score(score, target_min=0.5, target_max=0.99):
+        """
+        Mengkalibrasi skor agar memiliki rentang yang diinginkan.
+        """
+        # Normalisasi skor ke rentang 0 hingga 1
+        score_norm = (score - np.min(score)) / (np.max(score) - np.min(score))
+        
+        # Skalakan skor ke rentang yang diinginkan
+        calibrated_score = score_norm * (target_max - target_min) + target_min
+        
+        return calibrated_score
+
+    # Apply softmax to the similarity scores
+    recommendations['similarity_score'] = calibrate_score(recommendations['similarity_score'])
+    
     # Filter out favorite openings
     recommendations = recommendations[~recommendations.opening_name.isin(favorite_openings)]
     
@@ -99,130 +114,272 @@ def get_content_based_recommendations(favorite_openings, content_based_model, to
     return recommendations.head(top_n)
         
 # Function to get collaborative filtering recommendations
-def get_collaborative_recommendations(user_rating, collaborative_data, collaborative_model, top_n=5):
+def get_collaborative_recommendations(user_rating, collaborative_data, collaborative_model, top_n=5, debug=True):
     """
-    Mendapatkan rekomendasi opening berdasarkan rating pemain
+    Mendapatkan rekomendasi opening berdasarkan rating pemain dengan pendekatan yang lebih sensitif terhadap rating.
+
+    Parameters:
+    -----------
+    user_rating : int
+        Rating pemain yang meminta rekomendasi
+    collaborative_data : dict
+        Dictionary berisi data untuk collaborative filtering
+    collaborative_model : dict
+        Dictionary berisi model collaborative filtering
+    top_n : int
+        Jumlah rekomendasi yang ingin ditampilkan
+    debug : bool
+        Aktifkan mode debug untuk melihat proses detail
+
+    Returns:
+    --------
+    DataFrame
+        Dataframe berisi rekomendasi opening dengan skor
     """
-    # Cari pemain dengan rating yang mirip
+
+    def softmax(x):
+        """
+        Fungsi softmax yang membuat distribusi probabilitas dari array nilai.
+        Lebih baik untuk mempertahankan perbedaan relatif antara nilai prediksi.
+        """
+        # Kurangi max(x) untuk stabilitas numerik
+        e_x = np.exp(x - np.max(x))
+        return e_x / e_x.sum()
+
+
+    def estimate_opening_complexity(collaborative_data):
+        """
+        Estimasi kompleksitas pembukaan berdasarkan rating rata-rata pemain yang menggunakannya.
+        Pembukaan dengan rating rata-rata lebih tinggi dianggap lebih kompleks.
+
+        Returns:
+        --------
+        Series
+            Series berisi estimasi kompleksitas untuk setiap pembukaan
+        """
+        # Ambil matriks pemain-pembukaan
+        player_opening = collaborative_data['player_opening_matrix'].copy()
+
+        # Gabungkan dengan data pemain untuk mendapatkan rating
+        player_data = collaborative_data['player_data']
+        player_opening = player_opening.merge(player_data[['player_id', 'rating']], on='player_id', how='left')
+
+        # Hitung rating rata-rata per pembukaan
+        opening_avg_rating = player_opening.groupby('opening_name')['rating'].mean()
+
+        # Normalisasi ke [0, 1]
+        if opening_avg_rating.max() - opening_avg_rating.min() > 0:
+            normalized_complexity = (opening_avg_rating - opening_avg_rating.min()) / (opening_avg_rating.max() - opening_avg_rating.min())
+        else:
+            normalized_complexity = pd.Series(0.5, index=opening_avg_rating.index)
+
+        return normalized_complexity
+
+
+    def adjust_by_rating(predictions, complexity_scores, user_rating, rating_max=3000, influence=0.3):
+        """
+        Menyesuaikan prediksi berdasarkan rating pengguna dan kompleksitas pembukaan.
+
+        Parameters:
+        -----------
+        predictions : Series
+            Skor prediksi untuk setiap pembukaan
+        complexity_scores : Series
+            Skor kompleksitas untuk setiap pembukaan
+        user_rating : int
+            Rating pengguna
+        rating_max : int
+            Rating maksimum yang diperkirakan (untuk normalisasi)
+        influence : float
+            Seberapa besar pengaruh rating (0-1)
+
+        Returns:
+        --------
+        Series
+            Prediksi yang disesuaikan
+        """
+        # Normalisasi rating pengguna
+        normalized_rating = user_rating / rating_max
+
+        # Hitung faktor penyesuaian
+        # Pemain dengan rating rendah mendapat boost untuk pembukaan sederhana
+        # Pemain dengan rating tinggi mendapat boost untuk pembukaan kompleks
+        common_openings = set(predictions.index) & set(complexity_scores.index)
+
+        adjusted_predictions = predictions.copy()
+
+        for opening in common_openings:
+            complexity = complexity_scores.get(opening, 0.5)
+
+            # Rating tinggi → lebih suka pembukaan kompleks
+            # Rating rendah → lebih suka pembukaan sederhana
+            rating_factor = normalized_rating - 0.5  # -0.5 to 0.5
+
+            # Kompleksitas tinggi → kompleks, Kompleksitas rendah → sederhana
+            complexity_factor = complexity - 0.5  # -0.5 to 0.5
+
+            # Jika keduanya cocok (rating tinggi & kompleks ATAU rating rendah & sederhana),
+            # maka berikan boost
+            adjustment = influence * rating_factor * complexity_factor * 2  # * 2 untuk memperkuat efek
+
+            adjusted_predictions[opening] = adjusted_predictions[opening] * (1 + adjustment)
+
+        # Renormalisasi hasil
+        if adjusted_predictions.max() > 0:
+            adjusted_predictions = adjusted_predictions / adjusted_predictions.max()
+
+        return adjusted_predictions
+
+    if debug:
+        print(f"Input user rating: {user_rating}")
+
+    # Ambil data yang diperlukan
     player_data = collaborative_data['player_data']
-    rating_diff = abs(player_data['rating'] - user_rating)
-    similar_players_idx = rating_diff.nsmallest(20).index
-    similar_players = player_data.loc[similar_players_idx, 'player_id'].unique()
-    
-    # Jika tidak ada pemain yang mirip, return DataFrame kosong
-    if len(similar_players) == 0:
-        return pd.DataFrame(columns=['opening_name', 'score'])
-    
-    # Encode similar players
     player_encoder = collaborative_data['player_encoder']
     opening_encoder = collaborative_data['opening_encoder']
-    
+    model = collaborative_model['model']
+
+    # === IMPROVED: Cari pemain dengan rating yang mirip dengan user_rating dengan pembobotan ===
+    rating_diff = abs(player_data['rating'] - user_rating)
+
+    # Gunakan rating_range dinamis untuk memastikan kita mendapatkan pemain yang cukup
+    min_similar_players = 10  # Meningkatkan jumlah minimum pemain serupa
+    rating_ranges = [50, 100, 200, 300, 400, 500, 750, 1000]  # Range yang lebih halus
+
+    similar_players_idx = None
+    used_rating_range = None
+
+    for rating_range in rating_ranges:
+        similar_players_idx = rating_diff[rating_diff <= rating_range].index
+        if len(similar_players_idx) >= min_similar_players:
+            used_rating_range = rating_range
+            break
+
+    # Jika masih kurang, ambil pemain dengan rating terdekat
+    if len(similar_players_idx) < min_similar_players:
+        similar_players_idx = rating_diff.nsmallest(min_similar_players).index
+        used_rating_range = "adaptive"
+
+    # === IMPROVED: Terapkan pembobotan berdasarkan kedekatan rating ===
+    # Pemain dengan rating yang lebih dekat akan memiliki pengaruh lebih besar
+    rating_weights = 1 / (rating_diff.loc[similar_players_idx] + 10)  # +10 untuk menghindari pembagian dengan nol atau bobot terlalu besar
+
+    # Normalisasi bobot agar jumlahnya 1
+    rating_weights = rating_weights / rating_weights.sum()
+
+    similar_players = player_data.loc[similar_players_idx, 'player_id'].unique()
+
+    if debug:
+        print(f"Found {len(similar_players)} similar players with rating around {user_rating} (range: {used_rating_range})")
+        player_ratings = player_data.loc[similar_players_idx, 'rating'].values
+        print(f"Similar players ratings: min={player_ratings.min()}, max={player_ratings.max()}, mean={player_ratings.mean():.1f}")
+        print(f"Rating weights: min={rating_weights.min():.4f}, max={rating_weights.max():.4f}")
+
     # Filter similar players yang ada dalam encoder
     valid_similar_players = [p for p in similar_players if p in player_encoder.classes_]
-    
-    if len(valid_similar_players) == 0:
-        return pd.DataFrame(columns=['opening_name', 'score'])
-    
-    # Encoded similar players
-    encoded_similar_players = [player_encoder.transform([p])[0] for p in valid_similar_players]
-    
-    # Get all openings
-    all_openings = opening_encoder.classes_
-    encoded_all_openings = np.arange(len(all_openings))
-    
-    # Predict ratings for all openings for each similar player
-    model = collaborative_model['model']
-    
-    # Initialize array for storing prediction scores
-    all_predictions = np.zeros((len(valid_similar_players), len(all_openings)))
-    
-    # Make predictions
-    for i, player_id in enumerate(encoded_similar_players):
-        player_input = np.array([player_id] * len(all_openings))
-        opening_input = encoded_all_openings
-        
-        predictions = model.predict(
-            [player_input, opening_input],
-            verbose=0
-        )
-        
-        all_predictions[i, :] = predictions.flatten()
-    
-    # Average predictions across similar players
-    avg_predictions = np.mean(all_predictions, axis=0)
-    
-    # Create recommendations DataFrame
-    recommendations = pd.DataFrame({
-        'opening_name': all_openings,
-        'score': avg_predictions
-    })
-    
-    # Sort by score
-    recommendations = recommendations.sort_values('score', ascending=False)
-    
-    return recommendations.head(top_n)
-    
-# Function to display opening details
-def display_opening_details(chess_data, opening_name, similarity_score=None, cf_score=None, hybrid_score=None):
-    """
-    Menampilkan detail opening untuk rekomendasi dengan informasi scoring yang tepat
-    """
-    opening_data = chess_data[chess_data.opening_name == opening_name]
-    
-    if len(opening_data) > 0:
-        opening_data = opening_data.iloc[0]
-        moves = opening_data['moves'].split(' ')[:opening_data['opening_ply']]
-        
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            st.subheader(opening_name)
-            st.write(f"**Archetype:** {opening_data['opening_archetype']}")
-            st.write(f"**Opening Moves:** {' '.join(moves)}")
-            
-            # Display scores with proper formatting
-            st.write("### Recommendation Scores")
-            scores_html = "<table style='width: 100%;'><tr><th>Score Type</th><th>Value</th></tr>"
-            
-            if similarity_score is not None:
-                scores_html += f"<tr><td>Content-Based</td><td>{similarity_score:.4f}</td></tr>"
-            
-            if cf_score is not None:
-                scores_html += f"<tr><td>Collaborative</td><td>{cf_score:.4f}</td></tr>"
-            
-            if hybrid_score is not None:
-                scores_html += f"<tr><td><strong>Hybrid Score</strong></td><td><strong>{hybrid_score:.4f}</strong></td></tr>"
-                
-            scores_html += "</table>"
-            st.markdown(scores_html, unsafe_allow_html=True)
-                
-        with col2:
-            # Get win rates if available
-            opening_games = chess_data[chess_data.opening_name == opening_name]
-            if len(opening_games) > 0 and 'winner' in opening_games.columns:
-                white_wins = sum(opening_games['winner'] == 'white')
-                black_wins = sum(opening_games['winner'] == 'black')
-                draws = sum(opening_games['winner'] == 'draw')
-                total = len(opening_games)
-                
-                st.write("### Win Rates")
-                st.write(f"White: {white_wins/total:.1%}")
-                st.write(f"Black: {black_wins/total:.1%}")
-                st.write(f"Draw: {draws/total:.1%}")
-                
-                # Create a pie chart for win rates
-                fig, ax = plt.subplots(figsize=(4, 4))
-                ax.pie(
-                    [white_wins/total, black_wins/total, draws/total],
-                    labels=['White', 'Black', 'Draw'],
-                    autopct='%1.1f%%',
-                    startangle=90,
-                    colors=['#f0f0f0', '#303030', '#909090']
-                )
-                ax.axis('equal')
-                st.pyplot(fig)
+    valid_player_indices = [similar_players_idx[i] for i, p in enumerate(similar_players) if p in player_encoder.classes_]
+
+    # Sesuaikan bobot untuk pemain yang valid
+    if valid_player_indices:
+        valid_weights = rating_weights.loc[valid_player_indices]
+        valid_weights = valid_weights / valid_weights.sum()  # Renormalisasi bobot
     else:
-        st.warning(f"No data found for opening: {opening_name}")
+        valid_weights = None
+
+    if debug:
+        print(f"Found {len(valid_similar_players)} valid similar players in encoder")
+
+    # Jika tidak ada pemain yang valid, gunakan pendekatan popularitas
+    if len(valid_similar_players) == 0:
+        if debug:
+            print("Warning: No valid similar players in encoder, using popularity-based approach")
+
+        opening_counts = collaborative_data['player_opening_matrix'].groupby('opening_name').size()
+
+        # === IMPROVED: Terapkan faktor rating ke pendekatan popularitas ===
+        # Ambil faktor kompleksitas pembukaan (kita akan estimasi berdasarkan distribusi rating)
+        opening_complexity = estimate_opening_complexity(collaborative_data)
+
+        # Sesuaikan popularitas berdasarkan rating
+        adjusted_counts = adjust_by_rating(opening_counts, opening_complexity, user_rating)
+
+        # Normalisasi
+        normalized_counts = adjusted_counts / adjusted_counts.max() if adjusted_counts.max() > 0 else adjusted_counts
+
+        recommendations = pd.DataFrame({
+            'opening_name': adjusted_counts.index,
+            'score': normalized_counts.values
+        }).sort_values('score', ascending=False)
+
+    else:  # Jika ada pemain yang valid
+        # ========== IMPLEMENTASI LOGIKA REKOMENDASI YANG DITINGKATKAN ==========
+        # 1. Encode players dan openings
+        encoded_players = player_encoder.transform(valid_similar_players)
+        encoded_openings = np.arange(len(opening_encoder.classes_))
+
+        # 2. Buat input batch untuk prediksi
+        players_batch = np.repeat(encoded_players, len(encoded_openings))
+        openings_batch = np.tile(encoded_openings, len(encoded_players))
+
+        # 3. Prediksi rating untuk semua kombinasi
+        predictions = model.predict(
+            [players_batch, openings_batch],
+            batch_size=1024,
+            verbose=0
+        ).flatten()
+
+        # 4. Reshape ke bentuk (num_players, num_openings)
+        predictions_matrix = predictions.reshape(len(encoded_players), -1)
+
+        # === IMPROVED: Gunakan pembobotan untuk rata-rata prediksi ===
+        if valid_weights is not None:
+            # Terapkan bobot ke prediksi
+            weighted_predictions = np.zeros(predictions_matrix.shape[1])
+
+            for i in range(len(valid_similar_players)):
+                weighted_predictions += predictions_matrix[i] * valid_weights.iloc[i]
+
+            avg_predictions = weighted_predictions
+        else:
+            # Fallback ke rata-rata biasa jika tidak ada bobot
+            avg_predictions = np.mean(predictions_matrix, axis=0)
+
+        if debug:
+            print(f"Raw predictions (sample): {avg_predictions[:5]}")
+            print(f"Min/Max raw prediction: {np.min(avg_predictions):.4f}/{np.max(avg_predictions):.4f}")
+
+        # === IMPROVED: Gunakan softmax untuk normalisasi yang lebih sensitif ===
+        # Softmax menjaga perbedaan relatif lebih baik daripada normalisasi min-max
+        temperature = 2.0  # Parameter untuk mengontrol "kecuraman" distribusi softmax
+        softmax_predictions = softmax(avg_predictions / temperature)
+
+        # === IMPROVED: Sesuaikan prediksi berdasarkan kompleksitas pembukaan ===
+        opening_complexity = estimate_opening_complexity(collaborative_data)
+
+        # Sesuaikan prediksi berdasarkan rating user dan kompleksitas pembukaan
+        final_predictions = adjust_by_rating(
+            pd.Series(softmax_predictions, index=opening_encoder.classes_),
+            opening_complexity,
+            user_rating
+        )
+
+        if debug:
+            print(f"After softmax normalization and rating adjustment (sample): {final_predictions[:5]}")
+            print(f"Min/Max final prediction: {final_predictions.min():.4f}/{final_predictions.max():.4f}")
+
+        # 7. Buat DataFrame rekomendasi
+        recommendations = pd.DataFrame({
+            'opening_name': final_predictions.index,
+            'score': final_predictions.values
+        }).sort_values('score', ascending=False)
+
+        if debug:
+            print("Collaborative filtering recommendations generated successfully")
+            print(f"Top 5 recommended openings with scores:")
+            for idx, row in recommendations.head().iterrows():
+                print(f"  {row['opening_name']}: {row['score']:.4f}")
+
+    return recommendations.head(top_n)
 
 # Function to get hybrid recommendations
 def get_hybrid_recommendations(favorite_openings, user_rating, 
@@ -247,11 +404,19 @@ def get_hybrid_recommendations(favorite_openings, user_rating,
     if len(collab_recs) > 0:
         print(f"Collaborative score range: {collab_recs['score'].min()} to {collab_recs['score'].max()}")
     
-    # If either recommendation is empty, return the other
+    # If either recommendation is empty, prepare a properly formatted DataFrame before returning
     if len(content_recs) == 0:
-        return collab_recs.head(top_n)
+        # Add the required columns to collaborative recommendations
+        result_df = collab_recs.head(top_n).rename(columns={'score': 'cf_score'})
+        result_df['cb_score'] = 0.0
+        result_df['hybrid_score'] = (1 - alpha) * result_df['cf_score']  # Weight by (1-alpha) since it's only CF
+        return result_df[['opening_name', 'hybrid_score', 'cb_score', 'cf_score']]
     elif len(collab_recs) == 0:
-        return content_recs.head(top_n)
+        # Add the required columns to content-based recommendations
+        result_df = content_recs.head(top_n).rename(columns={'similarity_score': 'cb_score'})
+        result_df['cf_score'] = 0.0
+        result_df['hybrid_score'] = alpha * result_df['cb_score']  # Weight by alpha since it's only CB
+        return result_df[['opening_name', 'hybrid_score', 'cb_score', 'cf_score']]
     
     # Copy DataFrames to avoid modifying originals
     content_recs = content_recs.copy()
@@ -332,6 +497,68 @@ def get_hybrid_recommendations(favorite_openings, user_rating,
     
     # Return only the needed columns for the final output
     return result_df[['opening_name', 'hybrid_score', 'cb_score', 'cf_score']]
+    
+# Function to display opening details
+def display_opening_details(chess_data, opening_name, similarity_score=None, cf_score=None, hybrid_score=None):
+    """
+    Menampilkan detail opening untuk rekomendasi dengan informasi scoring yang tepat
+    """
+    opening_data = chess_data[chess_data.opening_name == opening_name]
+    
+    if len(opening_data) > 0:
+        opening_data = opening_data.iloc[0]
+        moves = opening_data['moves'].split(' ')[:opening_data['opening_ply']]
+        
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            st.subheader(opening_name)
+            st.write(f"**Archetype:** {opening_data['opening_archetype']}")
+            st.write(f"**Opening Moves:** {' '.join(moves)}")
+            
+            # Display scores with proper formatting
+            st.write("### Recommendation Scores")
+            scores_html = "<table style='width: 100%;'><tr><th>Score Type</th><th>Value</th></tr>"
+            
+            if similarity_score is not None:
+                scores_html += f"<tr><td>Content-Based</td><td>{similarity_score:.4f}</td></tr>"
+            
+            if cf_score is not None:
+                scores_html += f"<tr><td>Collaborative</td><td>{cf_score:.4f}</td></tr>"
+            
+            if hybrid_score is not None:
+                scores_html += f"<tr><td><strong>Hybrid Score</strong></td><td><strong>{hybrid_score:.4f}</strong></td></tr>"
+                
+            scores_html += "</table>"
+            st.markdown(scores_html, unsafe_allow_html=True)
+                
+        with col2:
+            # Get win rates if available
+            opening_games = chess_data[chess_data.opening_name == opening_name]
+            if len(opening_games) > 0 and 'winner' in opening_games.columns:
+                white_wins = sum(opening_games['winner'] == 'white')
+                black_wins = sum(opening_games['winner'] == 'black')
+                draws = sum(opening_games['winner'] == 'draw')
+                total = len(opening_games)
+                
+                st.write("### Win Rates")
+                st.write(f"White: {white_wins/total:.1%}")
+                st.write(f"Black: {black_wins/total:.1%}")
+                st.write(f"Draw: {draws/total:.1%}")
+                
+                # Create a pie chart for win rates
+                fig, ax = plt.subplots(figsize=(4, 4))
+                ax.pie(
+                    [white_wins/total, black_wins/total, draws/total],
+                    labels=['White', 'Black', 'Draw'],
+                    autopct='%1.1f%%',
+                    startangle=90,
+                    colors=['#f0f0f0', '#303030', '#909090']
+                )
+                ax.axis('equal')
+                st.pyplot(fig)
+    else:
+        st.warning(f"No data found for opening: {opening_name}")
 
 # Load data
 chess_data = load_data()
@@ -445,41 +672,41 @@ if chess_data is not None:
             st.header("Hybrid Recommendations")
             st.write("Combined recommendations from both content-based and collaborative filtering")
         
-        if len(hybrid_recs) > 0:
-            # First, display a summary table of all recommendations
-            summary_df = hybrid_recs[['opening_name', 'hybrid_score', 'cb_score', 'cf_score']].copy()
-            
-            # Format scores for display
-            summary_df['hybrid_score'] = summary_df['hybrid_score'].map('{:.4f}'.format)
-            summary_df['cb_score'] = summary_df['cb_score'].map('{:.4f}'.format)
-            summary_df['cf_score'] = summary_df['cf_score'].map('{:.4f}'.format)
-            
-            # Rename columns for better display
-            summary_df.columns = ['Opening Name', 'Hybrid Score', 'Content-Based Score', 'Collaborative Score']
-            
-            # Display the summary table
-            st.dataframe(summary_df, use_container_width=True)
-            
-            # Horizontal line
-            st.markdown("---")
-            
-            # Then show detailed expandable sections
-            for i, (idx, row) in enumerate(hybrid_recs.iterrows(), 1):
-                opening = row['opening_name']
-                hybrid_score = row['hybrid_score'] 
-                cb_score = row['cb_score'] if 'cb_score' in row else None
-                cf_score = row['cf_score'] if 'cf_score' in row else None
+            if len(hybrid_recs) > 0:
+                # First, display a summary table of all recommendations
+                summary_df = hybrid_recs[['opening_name', 'hybrid_score', 'cb_score', 'cf_score']].copy()
                 
-                with st.expander(f"{i}. {opening} (Hybrid Score: {hybrid_score:.4f})"):
-                    display_opening_details(
-                        chess_data, 
-                        opening, 
-                        similarity_score=cb_score,
-                        cf_score=cf_score,
-                        hybrid_score=hybrid_score
-                    )
-        else:
-            st.warning("No hybrid recommendations found. Please try different settings.")
+                # Format scores for display
+                summary_df['hybrid_score'] = summary_df['hybrid_score'].map('{:.4f}'.format)
+                summary_df['cb_score'] = summary_df['cb_score'].map('{:.4f}'.format)
+                summary_df['cf_score'] = summary_df['cf_score'].map('{:.4f}'.format)
+                
+                # Rename columns for better display
+                summary_df.columns = ['Opening Name', 'Hybrid Score', 'Content-Based Score', 'Collaborative Score']
+                
+                # Display the summary table
+                st.dataframe(summary_df, use_container_width=True)
+                
+                # Horizontal line
+                st.markdown("---")
+                
+                # Then show detailed expandable sections
+                for i, (idx, row) in enumerate(hybrid_recs.iterrows(), 1):
+                    opening = row['opening_name']
+                    hybrid_score = row['hybrid_score'] 
+                    cb_score = row['cb_score'] if 'cb_score' in row else None
+                    cf_score = row['cf_score'] if 'cf_score' in row else None
+                    
+                    with st.expander(f"{i}. {opening} (Hybrid Score: {hybrid_score:.4f})"):
+                        display_opening_details(
+                            chess_data, 
+                            opening, 
+                            similarity_score=cb_score,
+                            cf_score=cf_score,
+                            hybrid_score=hybrid_score
+                        )
+            else:
+                st.warning("No hybrid recommendations found. Please try different settings.")
     
     # Generate recommendations button
     if st.sidebar.button("Get Recommendations"):
