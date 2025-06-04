@@ -14,7 +14,7 @@ st.markdown(
     """
     <style>
     [data-testid="stSidebar"] {
-        background-image: url("https://upload.wikimedia.org/wikipedia/commons/thumb/4/4e/Chess_pieces_close_up.jpg/1200px-Chess_pieces_close_up.jpg");
+        background-image: url("static/catur.jpg");
         background-size: cover;
         background-repeat: no-repeat;
         background-attachment: scroll;
@@ -214,7 +214,7 @@ def get_collaborative_recommendations(user_rating, collaborative_data, collabora
         similar_players_idx = rating_diff.nsmallest(min_similar_players).index
         used_rating_range = "adaptive"
 
-    # === IMPROVED: Terapkan pembobotan berdasarkan kedekatan rating ===
+    # Terapkan pembobotan berdasarkan kedekatan rating ===
     # Pemain dengan rating yang lebih dekat akan memiliki pengaruh lebih besar
     rating_weights = 1 / (rating_diff.loc[similar_players_idx] + 10)  # +10 untuk menghindari pembagian dengan nol atau bobot terlalu besar
 
@@ -250,7 +250,7 @@ def get_collaborative_recommendations(user_rating, collaborative_data, collabora
 
         opening_counts = collaborative_data['player_opening_matrix'].groupby('opening_name').size()
 
-        # === IMPROVED: Terapkan faktor rating ke pendekatan popularitas ===
+        # Terapkan faktor rating ke pendekatan popularitas ===
         # Ambil faktor kompleksitas pembukaan (kita akan estimasi berdasarkan distribusi rating)
         opening_complexity = estimate_opening_complexity(collaborative_data)
 
@@ -266,26 +266,26 @@ def get_collaborative_recommendations(user_rating, collaborative_data, collabora
         }).sort_values('score', ascending=False)
 
     else:  # Jika ada pemain yang valid
-        # ========== IMPLEMENTASI LOGIKA REKOMENDASI YANG DITINGKATKAN ==========
-        # 1. Encode players dan openings
+        # IMPLEMENTASI LOGIKA REKOMENDASI YANG DITINGKATKAN
+        # Encode players dan openings
         encoded_players = player_encoder.transform(valid_similar_players)
         encoded_openings = np.arange(len(opening_encoder.classes_))
 
-        # 2. Buat input batch untuk prediksi
+        # Buat input batch untuk prediksi
         players_batch = np.repeat(encoded_players, len(encoded_openings))
         openings_batch = np.tile(encoded_openings, len(encoded_players))
 
-        # 3. Prediksi rating untuk semua kombinasi
+        # Prediksi rating untuk semua kombinasi
         predictions = model.predict(
             [players_batch, openings_batch],
             batch_size=1024,
             verbose=0
         ).flatten()
 
-        # 4. Reshape ke bentuk (num_players, num_openings)
+        # Reshape ke bentuk (num_players, num_openings)
         predictions_matrix = predictions.reshape(len(encoded_players), -1)
 
-        # === IMPROVED: Gunakan pembobotan untuk rata-rata prediksi ===
+        # Gunakan pembobotan untuk rata-rata prediksi ===
         if valid_weights is not None:
             # Terapkan bobot ke prediksi
             weighted_predictions = np.zeros(predictions_matrix.shape[1])
@@ -302,7 +302,7 @@ def get_collaborative_recommendations(user_rating, collaborative_data, collabora
             print(f"Raw predictions (sample): {avg_predictions[:5]}")
             print(f"Min/Max raw prediction: {np.min(avg_predictions):.4f}/{np.max(avg_predictions):.4f}")
 
-        # === IMPROVED: Gunakan softmax untuk normalisasi yang lebih sensitif ===
+        # Gunakan softmax untuk normalisasi yang lebih sensitif ===
         # Softmax menjaga perbedaan relatif lebih baik daripada normalisasi min-max
         temperature = 2.0  # Parameter untuk mengontrol "kecuraman" distribusi softmax
         softmax_predictions = softmax(avg_predictions / temperature)
@@ -321,7 +321,7 @@ def get_collaborative_recommendations(user_rating, collaborative_data, collabora
             print(f"After softmax normalization and rating adjustment (sample): {final_predictions[:5]}")
             print(f"Min/Max final prediction: {final_predictions.min():.4f}/{final_predictions.max():.4f}")
 
-        # 7. Buat DataFrame rekomendasi
+        # Buat DataFrame rekomendasi
         recommendations = pd.DataFrame({
             'opening_name': final_predictions.index,
             'score': final_predictions.values
@@ -552,7 +552,11 @@ if chess_data is not None:
         max_value=1.0, 
         value=0.7,
         step=0.1,
-        help="Nilai lebih tinggi memberikan bobot lebih besar pada rekomendasi Content Based Filtering, nilai lebih rendah mengutamakan rekomendasi Collaborative",
+        help=(
+        "Geser untuk memilih jenis rekomendasi yang lebih diutamakan:\n\n"
+        "- Nilai mendekati 1 → Lebih mengutamakan rekomendasi berdasarkan pembukaan serupa yang pernah kamu sukai (Content-Based).\n"
+        "- Nilai mendekati 0 → Lebih mengutamakan rekomendasi berdasarkan pembukaan yang disukai oleh pemain lain dengan rating mirip (Collaborative)."
+    ),
         key="bobot_alpha"
     )
     
@@ -673,112 +677,112 @@ if chess_data is not None:
         favorite_df = pd.DataFrame(favorite_data)
         st.dataframe(favorite_df, use_container_width=True)
         
-        # Create visualization of favorite openings
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        # # Create visualization of favorite openings
+        # fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
         
-        # Games count
-        ax1.bar(range(len(favorite_df)), favorite_df['Jumlah Permainan'])
-        ax1.set_xlabel('Pembukaan Favorit')
-        ax1.set_ylabel('Jumlah Permainan dalam Dataset')
-        ax1.set_title('Popularitas Pembukaan Favorit')
-        ax1.set_xticks(range(len(favorite_df)))
-        ax1.set_xticklabels([f"#{i+1}" for i in range(len(favorite_df))])
+        # # Games count
+        # ax1.bar(range(len(favorite_df)), favorite_df['Jumlah Permainan'])
+        # ax1.set_xlabel('Pembukaan Favorit')
+        # ax1.set_ylabel('Jumlah Permainan dalam Dataset')
+        # ax1.set_title('Popularitas Pembukaan Favorit')
+        # ax1.set_xticks(range(len(favorite_df)))
+        # ax1.set_xticklabels([f"#{i+1}" for i in range(len(favorite_df))])
         
-        # Average ply
-        ax2.bar(range(len(favorite_df)), favorite_df['Rerata Langkah Pembukaan'])
-        ax2.set_xlabel('Pembukaan Favorit')
-        ax2.set_ylabel('Rata-rata Jumlah Langkah')
-        ax2.set_title('Kompleksitas Pembukaan Favorit')
-        ax2.set_xticks(range(len(favorite_df)))
-        ax2.set_xticklabels([f"#{i+1}" for i in range(len(favorite_df))])
+        # # Average ply
+        # ax2.bar(range(len(favorite_df)), favorite_df['Rerata Langkah Pembukaan'])
+        # ax2.set_xlabel('Pembukaan Favorit')
+        # ax2.set_ylabel('Rata-rata Jumlah Langkah')
+        # ax2.set_title('Kompleksitas Pembukaan Favorit')
+        # ax2.set_xticks(range(len(favorite_df)))
+        # ax2.set_xticklabels([f"#{i+1}" for i in range(len(favorite_df))])
         
-        plt.tight_layout()
-        st.pyplot(fig)
+        # plt.tight_layout()
+        # st.pyplot(fig)
     
-    # Dataset exploration section
-    with st.expander("Eksplorasi Dataset"):
-        st.subheader("Distribusi Rating")
+    # # Dataset exploration section
+    # with st.expander("Eksplorasi Dataset"):
+    #     st.subheader("Distribusi Rating")
         
-        # Create rating distribution plot
-        fig, ax = plt.subplots(figsize=(10, 6))
+    #     # Create rating distribution plot
+    #     fig, ax = plt.subplots(figsize=(10, 6))
         
-        # Combine white and black ratings
-        white_ratings = chess_data['white_rating'].dropna()
-        black_ratings = chess_data['black_rating'].dropna()
-        all_ratings = pd.concat([white_ratings, black_ratings])
+    #     # Combine white and black ratings
+    #     white_ratings = chess_data['white_rating'].dropna()
+    #     black_ratings = chess_data['black_rating'].dropna()
+    #     all_ratings = pd.concat([white_ratings, black_ratings])
         
-        ax.hist(all_ratings, bins=50, alpha=0.7, edgecolor='black')
-        ax.axvline(user_rating, color='red', linestyle='--', linewidth=2, label=f'Rating Anda ({user_rating})')
-        ax.set_xlabel('Rating')
-        ax.set_ylabel('Frekuensi')
-        ax.set_title('Distribusi Rating Pemain')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+    #     ax.hist(all_ratings, bins=50, alpha=0.7, edgecolor='black')
+    #     ax.axvline(user_rating, color='red', linestyle='--', linewidth=2, label=f'Rating Anda ({user_rating})')
+    #     ax.set_xlabel('Rating')
+    #     ax.set_ylabel('Frekuensi')
+    #     ax.set_title('Distribusi Rating Pemain')
+    #     ax.legend()
+    #     ax.grid(True, alpha=0.3)
         
-        st.pyplot(fig)
+    #     st.pyplot(fig)
         
-        st.subheader("Pembukaan Paling Populer")
+    #     st.subheader("Pembukaan Paling Populer")
         
-        # Most popular openings
-        popular_openings = chess_data.groupby('opening_name').size().sort_values(ascending=False).head(20)
+    #     # Most popular openings
+    #     popular_openings = chess_data.groupby('opening_name').size().sort_values(ascending=False).head(20)
         
-        fig, ax = plt.subplots(figsize=(12, 8))
-        y_pos = np.arange(len(popular_openings))
+    #     fig, ax = plt.subplots(figsize=(12, 8))
+    #     y_pos = np.arange(len(popular_openings))
         
-        bars = ax.barh(y_pos, popular_openings.values)
-        ax.set_yticks(y_pos)
-        ax.set_yticklabels([name[:30] + '...' if len(name) > 30 else name for name in popular_openings.index])
-        ax.invert_yaxis()
-        ax.set_xlabel('Jumlah Permainan')
-        ax.set_title('20 Pembukaan Paling Populer')
+    #     bars = ax.barh(y_pos, popular_openings.values)
+    #     ax.set_yticks(y_pos)
+    #     ax.set_yticklabels([name[:30] + '...' if len(name) > 30 else name for name in popular_openings.index])
+    #     ax.invert_yaxis()
+    #     ax.set_xlabel('Jumlah Permainan')
+    #     ax.set_title('20 Pembukaan Paling Populer')
         
-        # Highlight favorite openings
-        for i, opening in enumerate(popular_openings.index):
-            if opening in favorite_openings:
-                bars[i].set_color('orange')
+    #     # Highlight favorite openings
+    #     for i, opening in enumerate(popular_openings.index):
+    #         if opening in favorite_openings:
+    #             bars[i].set_color('orange')
         
-        plt.tight_layout()
-        st.pyplot(fig)
+    #     plt.tight_layout()
+    #     st.pyplot(fig)
         
-        st.subheader("Statistik Hasil Permainan")
+    #     st.subheader("Statistik Hasil Permainan")
         
-        # Win statistics
-        winner_counts = chess_data['winner'].value_counts()
+        # # Win statistics
+        # winner_counts = chess_data['winner'].value_counts()
         
-        col1, col2 = st.columns(2)
+        # col1, col2 = st.columns(2)
         
-        with col1:
-            # Pie chart for overall results
-            fig, ax = plt.subplots(figsize=(6, 6))
-            colors = ['#f0f0f0', '#303030', '#909090']
-            ax.pie(winner_counts.values, labels=winner_counts.index, autopct='%1.1f%%', 
-                   startangle=90, colors=colors)
-            ax.set_title('Distribusi Hasil Permainan')
-            st.pyplot(fig)
+        # with col1:
+        #     # Pie chart for overall results
+        #     fig, ax = plt.subplots(figsize=(6, 6))
+        #     colors = ['#f0f0f0', '#303030', '#909090']
+        #     ax.pie(winner_counts.values, labels=winner_counts.index, autopct='%1.1f%%', 
+        #            startangle=90, colors=colors)
+        #     ax.set_title('Distribusi Hasil Permainan')
+        #     st.pyplot(fig)
         
-        with col2:
-            # Statistics by rating range
-            chess_data_clean = chess_data.dropna(subset=['white_rating', 'black_rating'])
-            chess_data_clean['avg_rating'] = (chess_data_clean['white_rating'] + chess_data_clean['black_rating']) / 2
+        # with col2:
+        #     # Statistics by rating range
+        #     chess_data_clean = chess_data.dropna(subset=['white_rating', 'black_rating'])
+        #     chess_data_clean['avg_rating'] = (chess_data_clean['white_rating'] + chess_data_clean['black_rating']) / 2
             
-            # Create rating bins
-            chess_data_clean['rating_bin'] = pd.cut(chess_data_clean['avg_rating'], 
-                                                   bins=[0, 1200, 1400, 1600, 1800, 2000, 3000],
-                                                   labels=['<1200', '1200-1400', '1400-1600', 
-                                                          '1600-1800', '1800-2000', '>2000'])
+        #     # Create rating bins
+        #     chess_data_clean['rating_bin'] = pd.cut(chess_data_clean['avg_rating'], 
+        #                                            bins=[0, 1200, 1400, 1600, 1800, 2000, 3000],
+        #                                            labels=['<1200', '1200-1400', '1400-1600', 
+        #                                                   '1600-1800', '1800-2000', '>2000'])
             
-            rating_winner = chess_data_clean.groupby(['rating_bin', 'winner']).size().unstack(fill_value=0)
-            rating_winner_pct = rating_winner.div(rating_winner.sum(axis=1), axis=0) * 100
+        #     rating_winner = chess_data_clean.groupby(['rating_bin', 'winner']).size().unstack(fill_value=0)
+        #     rating_winner_pct = rating_winner.div(rating_winner.sum(axis=1), axis=0) * 100
             
-            fig, ax = plt.subplots(figsize=(8, 6))
-            rating_winner_pct.plot(kind='bar', stacked=True, ax=ax, color=colors)
-            ax.set_xlabel('Rentang Rating Rata-rata')
-            ax.set_ylabel('Persentase (%)')
-            ax.set_title('Distribusi Hasil berdasarkan Rating')
-            ax.legend(title='Pemenang')
-            plt.xticks(rotation=45)
-            plt.tight_layout()
-            st.pyplot(fig)
+        #     fig, ax = plt.subplots(figsize=(8, 6))
+        #     rating_winner_pct.plot(kind='bar', stacked=True, ax=ax, color=colors)
+        #     ax.set_xlabel('Rentang Rating Rata-rata')
+        #     ax.set_ylabel('Persentase (%)')
+        #     ax.set_title('Distribusi Hasil berdasarkan Rating')
+        #     ax.legend(title='Pemenang')
+        #     plt.xticks(rotation=45)
+        #     plt.tight_layout()
+        #     st.pyplot(fig)
 
 else:
     st.error("Gagal memuat dataset. Pastikan file 'games.csv' tersedia di direktori yang benar.")

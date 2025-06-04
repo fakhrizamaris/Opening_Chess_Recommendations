@@ -14,7 +14,7 @@ st.markdown(
     """
     <style>
     [data-testid="stSidebar"] {
-        background-image: url("https://upload.wikimedia.org/wikipedia/commons/thumb/4/4e/Chess_pieces_close_up.jpg/1200px-Chess_pieces_close_up.jpg");
+        background-image: url("/static/catur.jpg");
         background-size: cover;
         background-repeat: no-repeat;
         background-attachment: scroll;
@@ -85,9 +85,6 @@ def load_models():
 
 # Function to get content-based recommendations
 def get_content_based_recommendations(favorite_openings, content_based_model, top_n=5):
-    """
-    Mendapatkan rekomendasi berdasarkan opening favorit dengan model content-based
-    """
     similarity_df = content_based_model['similarity_matrix']
     opening_names = content_based_model['opening_names']
     
@@ -107,9 +104,6 @@ def get_content_based_recommendations(favorite_openings, content_based_model, to
     })
     
     def calibrate_score(score, target_min=0.5, target_max=0.99):
-        """
-        Mengkalibrasi skor agar memiliki rentang yang diinginkan.
-        """
         # Normalisasi skor ke rentang 0 hingga 1
         score_norm = (score - np.min(score)) / (np.max(score) - np.min(score))
         
@@ -128,92 +122,98 @@ def get_content_based_recommendations(favorite_openings, content_based_model, to
     recommendations = recommendations.sort_values('similarity_score', ascending=False)
     
     return recommendations.head(top_n)
-        
+
 # Function to get collaborative filtering recommendations
 def get_collaborative_recommendations(user_rating, collaborative_data, collaborative_model, top_n=5, debug=True):
-    """
-    Mendapatkan rekomendasi opening berdasarkan rating pemain dengan pendekatan yang lebih sensitif terhadap rating.
-
-    Parameters:
-    -----------
-    user_rating : int
-        Rating pemain yang meminta rekomendasi
-    collaborative_data : dict
-        Dictionary berisi data untuk collaborative filtering
-    collaborative_model : dict
-        Dictionary berisi model collaborative filtering
-    top_n : int
-        Jumlah rekomendasi yang ingin ditampilkan
-    debug : bool
-        Aktifkan mode debug untuk melihat proses detail
-
-    Returns:
-    --------
-    DataFrame
-        Dataframe berisi rekomendasi opening dengan skor
-    """
-
+    
     def softmax(x):
-        """
-        Fungsi softmax yang membuat distribusi probabilitas dari array nilai.
-        Lebih baik untuk mempertahankan perbedaan relatif antara nilai prediksi.
-        """
         # Kurangi max(x) untuk stabilitas numerik
         e_x = np.exp(x - np.max(x))
         return e_x / e_x.sum()
 
-
     def estimate_opening_complexity(collaborative_data):
         """
-        Estimasi kompleksitas pembukaan berdasarkan rating rata-rata pemain yang menggunakannya.
-        Pembukaan dengan rating rata-rata lebih tinggi dianggap lebih kompleks.
-
-        Returns:
-        --------
-        Series
-            Series berisi estimasi kompleksitas untuk setiap pembukaan
+        Estimate opening complexity based on average rating of players who use each opening
         """
-        # Ambil matriks pemain-pembukaan
-        player_opening = collaborative_data['player_opening_matrix'].copy()
-
-        # Gabungkan dengan data pemain untuk mendapatkan rating
-        player_data = collaborative_data['player_data']
-        player_opening = player_opening.merge(player_data[['player_id', 'rating']], on='player_id', how='left')
-
-        # Hitung rating rata-rata per pembukaan
-        opening_avg_rating = player_opening.groupby('opening_name')['rating'].mean()
-
-        # Normalisasi ke [0, 1]
-        if opening_avg_rating.max() - opening_avg_rating.min() > 0:
-            normalized_complexity = (opening_avg_rating - opening_avg_rating.min()) / (opening_avg_rating.max() - opening_avg_rating.min())
-        else:
-            normalized_complexity = pd.Series(0.5, index=opening_avg_rating.index)
-
-        return normalized_complexity
-
+        try:
+            # Debug: Print available keys in collaborative_data
+            if debug:
+                print("Available keys in collaborative_data:", list(collaborative_data.keys()))
+            
+            # Get player-opening matrix
+            if 'player_opening_matrix' not in collaborative_data:
+                print("Warning: 'player_opening_matrix' not found in collaborative_data")
+                return pd.Series(dtype=float)
+            
+            player_opening = collaborative_data['player_opening_matrix'].copy()
+            
+            # Debug: Print columns in player_opening_matrix
+            if debug:
+                print("Columns in player_opening_matrix:", list(player_opening.columns))
+            
+            # Get player data
+            if 'player_data' not in collaborative_data:
+                print("Warning: 'player_data' not found in collaborative_data")
+                return pd.Series(dtype=float)
+            
+            player_data = collaborative_data['player_data'].copy()
+            
+            # Debug: Print columns in player_data
+            if debug:
+                print("Columns in player_data:", list(player_data.columns))
+            
+            # Check if required columns exist
+            if 'player_id' not in player_opening.columns:
+                print("Warning: 'player_id' not found in player_opening_matrix")
+                return pd.Series(dtype=float)
+            
+            if 'rating' not in player_data.columns:
+                print("Warning: 'rating' not found in player_data")
+                # Try alternative column names
+                rating_cols = [col for col in player_data.columns if 'rating' in col.lower()]
+                if rating_cols:
+                    rating_col = rating_cols[0]
+                    print(f"Using alternative rating column: {rating_col}")
+                    player_data['rating'] = player_data[rating_col]
+                else:
+                    print("No rating column found, using default complexity")
+                    # Return default complexity scores
+                    unique_openings = player_opening['opening_name'].unique() if 'opening_name' in player_opening.columns else []
+                    return pd.Series(0.5, index=unique_openings)
+            
+            if 'opening_name' not in player_opening.columns:
+                print("Warning: 'opening_name' not found in player_opening_matrix")
+                return pd.Series(dtype=float)
+            
+            # Merge player_opening with player_data to get ratings
+            merged_data = player_opening.merge(
+                player_data[['player_id', 'rating']], 
+                on='player_id', 
+                how='left'
+            )
+            
+            if debug:
+                print(f"Merged data shape: {merged_data.shape}")
+                print(f"Records with rating: {merged_data['rating'].notna().sum()}")
+            
+            # Calculate average rating per opening
+            opening_avg_rating = merged_data.groupby('opening_name')['rating'].mean()
+            
+            # Normalize to [0, 1] range
+            if len(opening_avg_rating) > 0 and opening_avg_rating.max() - opening_avg_rating.min() > 0:
+                normalized_complexity = (opening_avg_rating - opening_avg_rating.min()) / (opening_avg_rating.max() - opening_avg_rating.min())
+            else:
+                # If all ratings are the same or no data, use default complexity of 0.5
+                normalized_complexity = pd.Series(0.5, index=opening_avg_rating.index if len(opening_avg_rating) > 0 else [])
+            
+            return normalized_complexity
+            
+        except Exception as e:
+            print(f"Error in estimate_opening_complexity: {e}")
+            # Return empty series as fallback
+            return pd.Series(dtype=float)
 
     def adjust_by_rating(predictions, complexity_scores, user_rating, rating_max=3000, influence=0.3):
-        """
-        Menyesuaikan prediksi berdasarkan rating pengguna dan kompleksitas pembukaan.
-
-        Parameters:
-        -----------
-        predictions : Series
-            Skor prediksi untuk setiap pembukaan
-        complexity_scores : Series
-            Skor kompleksitas untuk setiap pembukaan
-        user_rating : int
-            Rating pengguna
-        rating_max : int
-            Rating maksimum yang diperkirakan (untuk normalisasi)
-        influence : float
-            Seberapa besar pengaruh rating (0-1)
-
-        Returns:
-        --------
-        Series
-            Prediksi yang disesuaikan
-        """
         # Normalisasi rating pengguna
         normalized_rating = user_rating / rating_max
 
@@ -250,10 +250,39 @@ def get_collaborative_recommendations(user_rating, collaborative_data, collabora
         print(f"Input user rating: {user_rating}")
 
     # Ambil data yang diperlukan
-    player_data = collaborative_data['player_data']
-    player_encoder = collaborative_data['player_encoder']
-    opening_encoder = collaborative_data['opening_encoder']
-    model = collaborative_model['model']
+    try:
+        player_data = collaborative_data['player_data']
+        player_encoder = collaborative_data['player_encoder']
+        opening_encoder = collaborative_data['opening_encoder']
+        model = collaborative_model['model']
+    except KeyError as e:
+        print(f"Missing key in collaborative data: {e}")
+        return pd.DataFrame(columns=['opening_name', 'score'])
+
+    # Check if rating column exists in player_data
+    if 'rating' not in player_data.columns:
+        # Try to find rating column with different name
+        rating_cols = [col for col in player_data.columns if 'rating' in col.lower()]
+        if rating_cols:
+            player_data = player_data.copy()
+            player_data['rating'] = player_data[rating_cols[0]]
+            if debug:
+                print(f"Using rating column: {rating_cols[0]}")
+        else:
+            print("Warning: No rating column found in player_data")
+            # Use popularity-based approach as fallback
+            if 'player_opening_matrix' in collaborative_data:
+                opening_counts = collaborative_data['player_opening_matrix'].groupby('opening_name').size()
+                normalized_counts = opening_counts / opening_counts.max() if opening_counts.max() > 0 else opening_counts
+                
+                recommendations = pd.DataFrame({
+                    'opening_name': normalized_counts.index,
+                    'score': normalized_counts.values
+                }).sort_values('score', ascending=False)
+                
+                return recommendations.head(top_n)
+            else:
+                return pd.DataFrame(columns=['opening_name', 'score'])
 
     # === IMPROVED: Cari pemain dengan rating yang mirip dengan user_rating dengan pembobotan ===
     rating_diff = abs(player_data['rating'] - user_rating)
@@ -310,22 +339,28 @@ def get_collaborative_recommendations(user_rating, collaborative_data, collabora
         if debug:
             print("Warning: No valid similar players in encoder, using popularity-based approach")
 
-        opening_counts = collaborative_data['player_opening_matrix'].groupby('opening_name').size()
+        if 'player_opening_matrix' in collaborative_data:
+            opening_counts = collaborative_data['player_opening_matrix'].groupby('opening_name').size()
 
-        # === IMPROVED: Terapkan faktor rating ke pendekatan popularitas ===
-        # Ambil faktor kompleksitas pembukaan (kita akan estimasi berdasarkan distribusi rating)
-        opening_complexity = estimate_opening_complexity(collaborative_data)
+            # === IMPROVED: Terapkan faktor rating ke pendekatan popularitas ===
+            # Ambil faktor kompleksitas pembukaan (kita akan estimasi berdasarkan distribusi rating)
+            opening_complexity = estimate_opening_complexity(collaborative_data)
 
-        # Sesuaikan popularitas berdasarkan rating
-        adjusted_counts = adjust_by_rating(opening_counts, opening_complexity, user_rating)
+            # Sesuaikan popularitas berdasarkan rating
+            if len(opening_complexity) > 0:
+                adjusted_counts = adjust_by_rating(opening_counts, opening_complexity, user_rating)
+            else:
+                adjusted_counts = opening_counts
 
-        # Normalisasi
-        normalized_counts = adjusted_counts / adjusted_counts.max() if adjusted_counts.max() > 0 else adjusted_counts
+            # Normalisasi
+            normalized_counts = adjusted_counts / adjusted_counts.max() if adjusted_counts.max() > 0 else adjusted_counts
 
-        recommendations = pd.DataFrame({
-            'opening_name': adjusted_counts.index,
-            'score': normalized_counts.values
-        }).sort_values('score', ascending=False)
+            recommendations = pd.DataFrame({
+                'opening_name': adjusted_counts.index,
+                'score': normalized_counts.values
+            }).sort_values('score', ascending=False)
+        else:
+            return pd.DataFrame(columns=['opening_name', 'score'])
 
     else:  # Jika ada pemain yang valid
         # ========== IMPLEMENTASI LOGIKA REKOMENDASI YANG DITINGKATKAN ==========
@@ -373,11 +408,14 @@ def get_collaborative_recommendations(user_rating, collaborative_data, collabora
         opening_complexity = estimate_opening_complexity(collaborative_data)
 
         # Sesuaikan prediksi berdasarkan rating user dan kompleksitas pembukaan
-        final_predictions = adjust_by_rating(
-            pd.Series(softmax_predictions, index=opening_encoder.classes_),
-            opening_complexity,
-            user_rating
-        )
+        if len(opening_complexity) > 0:
+            final_predictions = adjust_by_rating(
+                pd.Series(softmax_predictions, index=opening_encoder.classes_),
+                opening_complexity,
+                user_rating
+            )
+        else:
+            final_predictions = pd.Series(softmax_predictions, index=opening_encoder.classes_)
 
         if debug:
             print(f"After softmax normalization and rating adjustment (sample): {final_predictions[:5]}")
