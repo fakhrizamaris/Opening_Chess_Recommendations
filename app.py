@@ -14,7 +14,7 @@ st.markdown(
     """
     <style>
     [data-testid="stSidebar"] {
-        background-image: url("static/catur.jpg");
+        background-image: url("https://www.google.com/url?sa=i&url=https%3A%2F%2Fhealth.detik.com%2Fkebugaran%2Fd-5503283%2Frahasia-jaga-stamina-para-grandmaster-catur-dunia&psig=AOvVaw26NKJQXq2-yQjxK4XkJRMp&ust=1749189224765000&source=images&cd=vfe&opi=89978449&ved=0CBQQjRxqFwoTCJiFiPDL2Y0DFQAAAAAdAAAAABAE");
         background-size: cover;
         background-repeat: no-repeat;
         background-attachment: scroll;
