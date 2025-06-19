@@ -14,19 +14,37 @@ st.markdown(
     """
     <style>
     [data-testid="stSidebar"] {
-        background-image: url("https://www.google.com/url?sa=i&url=https%3A%2F%2Fhealth.detik.com%2Fkebugaran%2Fd-5503283%2Frahasia-jaga-stamina-para-grandmaster-catur-dunia&psig=AOvVaw26NKJQXq2-yQjxK4XkJRMp&ust=1749189224765000&source=images&cd=vfe&opi=89978449&ved=0CBQQjRxqFwoTCJiFiPDL2Y0DFQAAAAAdAAAAABAE");
+        position: relative;
+        background-image: url("https://asset.kompas.com/crops/GkqYdnm4KTjjgz1TKQizL-2BFZ8=/305x0:1673x912/1200x800/data/photo/2020/06/04/5ed8fedec4eba.jpg");
         background-size: cover;
         background-repeat: no-repeat;
         background-attachment: scroll;
-        text-color: white;
+        color: white;
         font-weight: 600;
+        z-index: 1;
     }
-    
+
+    /* Overlay gelap di atas gambar */
+    [data-testid="stSidebar"]::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(0, 0, 0, 0.7); /* warna hitam transparan */
+        z-index: 0;
+    }
+
+    /* Pastikan konten sidebar tetap di atas overlay */
+    [data-testid="stSidebar"] * {
+        position: relative;
+        z-index: 1;
+    }
     </style>
     """,
     unsafe_allow_html=True
 )
-
 # Title and description
 st.title("Sistem Rekomendasi Pembukaan Catur")
 st.write("Dapatkan rekomendasi pembukaan catur yang dipersonalisasi berdasarkan preferensi Anda")
