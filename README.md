@@ -2,6 +2,9 @@
 
 Sebuah aplikasi web interaktif yang memberikan rekomendasi pembukaan catur yang dipersonalisasi berdasarkan preferensi dan rating Anda. Sistem ini menggunakan tiga pendekatan machine learning: Content-Based Filtering, Collaborative Filtering, dan Hybrid Filtering.
 
+![image](https://github.com/user-attachments/assets/7808d89e-2b6e-4e11-89cb-785e2ffcc983)
+
+
 ## 🎯 Fitur Utama
 
 - **Content-Based Filtering**: Rekomendasi berdasarkan kemiripan langkah dengan pembukaan favorit Anda
